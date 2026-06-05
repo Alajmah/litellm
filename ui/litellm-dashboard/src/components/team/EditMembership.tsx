@@ -158,7 +158,7 @@ const MemberModal = <T extends BaseMember>({
           />
         );
       case "budget-duration":
-        return <BudgetDurationDropdown />;
+        return <BudgetDurationDropdown allowClear={false} />;
       default:
         return null;
     }

@@ -105,3 +105,40 @@ async def test_team_member_update_passes_budget_duration_to_upsert(monkeypatch):
     upsert_mock.assert_awaited_once()
     assert upsert_mock.await_args.kwargs["budget_duration"] == "30d"
     assert response.budget_duration == "30d"
+
+
+@pytest.mark.parametrize(
+    "bad_duration",
+    [
+        "not-a-duration",  # unparseable garbage
+        "10x",  # unsupported unit
+        "0d",  # zero-length window
+        "999999999999999999999999d",  # overflows datetime math
+    ],
+)
+@pytest.mark.asyncio
+async def test_team_member_update_rejects_invalid_budget_duration(
+    monkeypatch, bad_duration
+):
+    """An invalid budget_duration must be rejected with a 400 before any DB
+    write, so it can never be persisted and later break the budget reset job."""
+    monkeypatch.setattr(proxy_server, "prisma_client", object())
+    monkeypatch.setattr(proxy_server, "premium_user", False)
+    upsert_mock = AsyncMock()
+    monkeypatch.setattr(team_endpoints, "_upsert_budget_and_membership", upsert_mock)
+
+    data = TeamMemberUpdateRequest(
+        team_id="team-1234",
+        user_id="user-1",
+        role="user",
+        budget_duration=bad_duration,
+    )
+    request = Request({"type": "http", "method": "POST", "path": "/team/member_update"})
+    auth = UserAPIKeyAuth(user_role=LitellmUserRoles.PROXY_ADMIN.value, user_id="admin")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await team_member_update(data, request, auth)
+
+    assert exc_info.value.status_code == 400
+    assert "budget_duration" in str(exc_info.value.detail)
+    upsert_mock.assert_not_called()
